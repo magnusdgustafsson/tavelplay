@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="280" height="100" viewBox="0 0 280 100" role="img" aria-label="TavelPlay logo with tagline Track your game">
+  <defs>
+    <style>
+      :root{
+        --bg:#0B1D6B;
+        --ink:#E8F2FF;
+        --cyan:#64D6FF;
+        --ltblue:#7AA7FF;
+        --yellow:#FFD966;
+        --shadow:#06124A;
+        --navy:#06124A;
+      }
+      .word {
+        font-family: ui-monospace, "Cascadia Mono", Menlo, Monaco, Consolas, "Courier New", monospace;
+        font-weight: 900;
+        letter-spacing: 1.4px;
+      }
+      .tag {
+        font-family: ui-monospace, "Cascadia Mono", Menlo, Monaco, Consolas, "Courier New", monospace;
+        font-weight: 800;
+        letter-spacing: 0.6px;
+      }
+    </style>
+
+    <pattern id="scan" width="4" height="4" patternUnits="userSpaceOnUse">
+      <rect width="4" height="4" fill="transparent"/>
+      <rect y="0" width="4" height="1" fill="rgba(255,255,255,0.06)"/>
+    </pattern>
+
+    <filter id="pixelShadow" x="-20%" y="-40%" width="140%" height="180%">
+      <feOffset dx="2" dy="2" result="o1"/>
+      <feFlood flood-color="var(--shadow)"/>
+      <feComposite in2="o1" operator="in" result="s1"/>
+      <feOffset dx="4" dy="4" result="o2"/>
+      <feFlood flood-color="#000" flood-opacity="0.16"/>
+      <feComposite in2="o2" operator="in" result="s2"/>
+      <feMerge>
+        <feMergeNode in="s2"/>
+        <feMergeNode in="s1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <clipPath id="clip">
+      <rect x="0" y="0" width="280" height="100" rx="10" ry="10"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#clip)">
+    <!-- Background -->
+    <rect width="280" height="100" fill="var(--bg)"/>
+    <rect width="280" height="100" fill="url(#scan)"/>
+
+    <!-- Track lanes -->
+    <g opacity="0.95">
+      <path d="M8,80 C70,58 140,54 272,62" fill="none" stroke="var(--ltblue)" stroke-width="6"/>
+      <path d="M8,88 C70,66 140,62 272,70" fill="none" stroke="var(--cyan)" stroke-width="6"/>
+      <path d="M20,84 C78,64 144,60 262,68" fill="none" stroke="var(--ink)" stroke-width="2"
+            stroke-dasharray="6 8" opacity="0.85"/>
+    </g>
+
+    <!-- Ball -->
+    <g transform="translate(18,20)" filter="url(#pixelShadow)">
+      <circle cx="22" cy="22" r="18" fill="var(--ink)"/>
+      <circle cx="22" cy="22" r="18" fill="none" stroke="var(--navy)" stroke-width="4"/>
+      <path d="M22 11 L28 16 L26 24 L18 24 L16 16 Z" fill="var(--navy)"/>
+      <path d="M12 20 L16 16 L18 24 L14 29 L9 25 Z" fill="var(--ltblue)"/>
+      <path d="M32 20 L35 25 L30 29 L26 24 L28 16 Z" fill="var(--cyan)"/>
+      <path d="M18 24 L26 24 L30 29 L22 34 L14 29 Z" fill="var(--yellow)"/>
+      <rect x="14" y="12" width="6" height="4" fill="rgba(255,255,255,0.55)"/>
+      <rect x="44" y="14" width="14" height="4" fill="var(--cyan)"/>
+      <rect x="44" y="22" width="10" height="4" fill="var(--ltblue)"/>
+      <rect x="44" y="30" width="12" height="4" fill="var(--yellow)"/>
+    </g>
+
+    <!-- Wordmark -->
+    <g filter="url(#pixelShadow)">
+      <path d="M86 14 H270 V54 H86 Z" fill="rgba(255,255,255,0.08)"/>
+      <text x="94" y="43" class="word" font-size="26" fill="var(--ink)">
+        Tavel<tspan fill="var(--cyan)">Play</tspan>
+      </text>
+      <rect x="94" y="49" width="150" height="3" fill="var(--cyan)"/>
+      <rect x="94" y="52" width="104" height="3" fill="var(--yellow)"/>
+    </g>
+
+    <!-- Tagline moved lower into solid blue area -->
+    <g>
+      <text x="94" y="90" class="tag" font-size="12" fill="var(--ink)">
+        Track your game
+      </text>
+    </g>
+
+  </g>
+</svg>
