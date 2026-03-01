@@ -49,6 +49,12 @@
                         <input type="text" id="player-name-input" placeholder="Enter player name" maxlength="30">
                         <button id="add-player-btn" class="btn-primary">Add Player</button>
                     </div>
+                    <div class="player-entry-form">
+                        <select id="recurring-player-select" class="player-name-input-style">
+                            <option value="">Recurring players…</option>
+                        </select>
+                        <span class="player-entry-recurring-spacer"></span>
+                    </div>
                     <div class="player-list" id="player-list">
                         <!-- Populated by JavaScript -->
                     </div>
@@ -138,6 +144,22 @@
                             </div>
                         </div>
                         <div class="setting-item">
+                            <div class="recurring-players-header">
+                                <h3>Recurring players</h3>
+                                <button type="button" id="recurring-manage-toggle-btn" class="btn-secondary">MANAGE</button>
+                            </div>
+                            <div id="recurring-players-manage" class="recurring-players-manage" style="display: none;">
+                                <label for="recurring-player-name-input">Add recurring player:</label>
+                                <div class="goalkeeper-entry-form">
+                                    <input type="text" id="recurring-player-name-input" placeholder="Enter name" maxlength="30">
+                                    <button type="button" id="add-recurring-player-btn" class="btn-primary">Add</button>
+                                </div>
+                                <div class="goalkeeper-list" id="recurring-players-list">
+                                    <!-- Populated by JavaScript -->
+                                </div>
+                            </div>
+                        </div>
+                        <div class="setting-item">
                             <label for="setting-black-team-name">Left Side Team:</label>
                             <select id="setting-black-team-name" class="max-score-selector">
                                 <option value="BLACK TEAM">BLACK TEAM</option>
@@ -198,6 +220,7 @@
                     <button id="rematch-btn" class="btn-secondary" style="display: none;">Rematch</button>
                     <button id="edit-teams-btn" class="btn-secondary">Edit Teams</button>
                     <button id="swap-sides-btn" class="btn-secondary">Swap Sides</button>
+                    <button id="finish-session-team-selection-btn" class="btn-secondary">Finish Session</button>
                     <button id="start-game-btn" class="btn-primary">Start Game</button>
                 </div>
             </div>
@@ -220,6 +243,7 @@
                     <button id="white-goal-btn" class="goal-btn goal-btn-white">WHITE GOAL</button>
                 </div>
                 <div class="screen-footer">
+                    <button id="back-to-team-selection-btn" class="btn-secondary" style="display: none;">Back</button>
                     <button id="view-teams-btn" class="btn-secondary">View Teams</button>
                     <button id="undo-goal-btn" class="btn-secondary" disabled>Undo last goal</button>
                     <button id="end-game-btn" class="btn-secondary">End Game</button>
@@ -264,8 +288,8 @@
                     </div>
                 </div>
                 <div class="screen-footer">
-                    <button id="proceed-btn" class="btn-primary">Proceed</button>
                     <button id="finish-session-btn" class="btn-secondary">Finish Session</button>
+                    <button id="proceed-btn" class="btn-primary">Next Game</button>
                 </div>
             </div>
 
@@ -294,10 +318,10 @@
                     <p id="team-wins-summary" class="team-wins-summary" aria-live="polite"></p>
                 </div>
                 <div class="screen-footer">
-                    <button id="continue-session-btn" class="btn-primary">Continue Session</button>
+                    <button id="reset-all-data-btn" class="btn-secondary">Reset All Data</button>
                     <button id="export-png-btn" class="btn-secondary">Export PNG</button>
                     <button id="view-gk-stats-btn" class="btn-secondary">View GK stats</button>
-                    <button id="reset-all-data-btn" class="btn-secondary">Reset All Data</button>
+                    <button id="continue-session-btn" class="btn-primary">Continue Session</button>
                 </div>
             </div>
         </main>

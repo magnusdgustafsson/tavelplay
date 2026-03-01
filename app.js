@@ -32,11 +32,18 @@ const AppState = {
     todaysStatsView: 'field' // 'field' | 'gk'
 };
 
+// Recurring players are stored separately from the session so they
+// persist across resets of players/games.
+let RecurringPlayers = [];
+const RECURRING_PLAYERS_STORAGE_KEY = 'floorballRecurringPlayers';
+let recurringManageOpen = false;
+
 let teamSelectionCountdownInterval = null;
 
 // Initialize App
 function initApp() {
     loadSession();
+    loadRecurringPlayers();
     setupEventListeners();
     showScreen('player-entries');
     updateStandings();
@@ -116,6 +123,62 @@ function loadSession() {
             })()
         };
     }
+}
+
+// Recurring players persistence (separate from session data)
+function loadRecurringPlayers() {
+    try {
+        const saved = localStorage.getItem(RECURRING_PLAYERS_STORAGE_KEY);
+        if (!saved) {
+            RecurringPlayers = [];
+            return;
+        }
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+            RecurringPlayers = parsed
+                .filter(p => p && typeof p.name === 'string')
+                .map(p => ({
+                    id: typeof p.id === 'string' ? p.id : `rp-${Date.now().toString()}`,
+                    name: p.name
+                }));
+        } else {
+            RecurringPlayers = [];
+        }
+    } catch (e) {
+        RecurringPlayers = [];
+    }
+}
+
+function saveRecurringPlayers() {
+    try {
+        localStorage.setItem(
+            RECURRING_PLAYERS_STORAGE_KEY,
+            JSON.stringify(RecurringPlayers)
+        );
+    } catch (e) {
+        // Ignore storage errors
+    }
+}
+
+function updateRecurringManageUI() {
+    const panel = document.getElementById('recurring-players-manage');
+    const btn = document.getElementById('recurring-manage-toggle-btn');
+    if (panel) panel.style.display = recurringManageOpen ? 'block' : 'none';
+    if (btn) btn.textContent = recurringManageOpen ? 'CLOSE' : 'MANAGE';
+}
+
+function addRecurringPlayerFromSettings(name) {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return false;
+    const exists = RecurringPlayers.some(
+        p => (p.name || '').toLowerCase() === trimmed.toLowerCase()
+    );
+    if (exists) return false;
+    RecurringPlayers.push({ id: `rp-${Date.now().toString()}`, name: trimmed });
+    saveRecurringPlayers();
+    renderSettings();
+    renderRecurringPlayersDropdown();
+    return true;
 }
 
 function resetSession() {
@@ -243,6 +306,8 @@ function updateTeamSelectionFooter() {
     if (rematchBtn) rematchBtn.style.display = viewingFromGame ? 'none' : (AppState.previousTeams ? 'block' : 'none');
     if (editTeamsBtn) editTeamsBtn.style.display = viewingFromGame ? 'none' : '';
     if (swapSidesBtn) swapSidesBtn.style.display = viewingFromGame ? 'none' : '';
+    const finishSessionTeamSelectionBtn = document.getElementById('finish-session-team-selection-btn');
+    if (finishSessionTeamSelectionBtn) finishSessionTeamSelectionBtn.style.display = viewingFromGame ? 'none' : '';
     if (startGameBtn) startGameBtn.style.display = viewingFromGame ? 'none' : '';
     
     if (viewingFromGame && backToGameBtn) {
@@ -965,6 +1030,45 @@ function renderPlayerEntries() {
     
     // Render settings
     renderSettings();
+
+    // Update recurring players dropdown
+    renderRecurringPlayersDropdown();
+}
+
+function renderRecurringPlayersDropdown() {
+    const select = document.getElementById('recurring-player-select');
+    if (!select) return;
+
+    // Base option
+    select.innerHTML = '';
+    const baseOption = document.createElement('option');
+    baseOption.value = '';
+    baseOption.textContent = 'Recurring players…';
+    select.appendChild(baseOption);
+
+    if (!Array.isArray(RecurringPlayers) || RecurringPlayers.length === 0) {
+        return;
+    }
+
+    const existingNames = new Set(
+        AppState.players.map(p => (p.name || '').toLowerCase())
+    );
+
+    // Sort alphabetically by name for easier scanning
+    const sorted = [...RecurringPlayers].sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    );
+
+    sorted.forEach(p => {
+        const name = (p.name || '').trim();
+        if (!name) return;
+        if (existingNames.has(name.toLowerCase())) return;
+
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = name;
+        select.appendChild(opt);
+    });
 }
 
 function showPlayerEntriesView() {
@@ -1075,6 +1179,7 @@ function renderSettings() {
     const goalkeepersStatus = document.getElementById('goalkeepers-status');
     const goalkeepersListContainer = document.getElementById('goalkeepers-list-container');
     const goalkeepersList = document.getElementById('goalkeeper-list');
+    const recurringPlayersList = document.getElementById('recurring-players-list');
     if (goalkeepersToggle) {
         goalkeepersToggle.checked = AppState.settings.goalkeepersEnabled;
     }
@@ -1101,6 +1206,40 @@ function renderSettings() {
             goalkeepersList.appendChild(item);
         });
     }
+
+    // Recurring players list (managed separately from session players)
+    if (recurringPlayersList) {
+        recurringPlayersList.innerHTML = '';
+
+        if (Array.isArray(RecurringPlayers) && RecurringPlayers.length > 0) {
+            const sorted = [...RecurringPlayers].sort((a, b) =>
+                a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+            );
+
+            sorted.forEach(p => {
+                const name = (p.name || '').trim();
+                if (!name) return;
+
+                const item = document.createElement('div');
+                item.className = 'goalkeeper-item';
+
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'goalkeeper-item-name';
+                nameSpan.textContent = name;
+
+                const removeBtn = document.createElement('button');
+                removeBtn.className = 'remove-goalkeeper-btn';
+                removeBtn.textContent = 'Remove';
+                removeBtn.setAttribute('data-recurring-id', p.id);
+
+                item.appendChild(nameSpan);
+                item.appendChild(removeBtn);
+                recurringPlayersList.appendChild(item);
+            });
+        }
+    }
+
+    updateRecurringManageUI();
 
     // Update starting lineup toggle and count
     const startingLineupToggle = document.getElementById('setting-starting-lineup-enabled');
@@ -1515,6 +1654,13 @@ function renderGameProgress() {
     const undoGoalBtn = document.getElementById('undo-goal-btn');
     if (undoGoalBtn) {
         undoGoalBtn.disabled = !AppState.currentGame.goals.length;
+    }
+
+    // Back to Team Selection: show only when score is 0-0 (no goals registered)
+    const backToTeamSelectionBtn = document.getElementById('back-to-team-selection-btn');
+    if (backToTeamSelectionBtn) {
+        const isZeroZero = AppState.currentGame.blackScore === 0 && AppState.currentGame.whiteScore === 0;
+        backToTeamSelectionBtn.style.display = isZeroZero ? '' : 'none';
     }
 }
 
@@ -2844,14 +2990,19 @@ function setupEventListeners() {
     // Player Entries Screen
     const playerNameInput = document.getElementById('player-name-input');
     const addPlayerBtn = document.getElementById('add-player-btn');
+    const recurringSelect = document.getElementById('recurring-player-select');
     const continueBtn = document.getElementById('continue-btn');
     
     if (addPlayerBtn) {
         addPlayerBtn.addEventListener('click', () => {
-            const name = playerNameInput?.value || '';
-            if (addPlayer(name)) {
-                if (playerNameInput) playerNameInput.value = '';
-                if (playerNameInput) playerNameInput.focus();
+            const rawName = playerNameInput?.value || '';
+            const name = rawName.trim();
+            if (!name) return;
+
+            const added = addPlayer(name);
+            if (added && playerNameInput) {
+                playerNameInput.value = '';
+                playerNameInput.focus();
             }
         });
     }
@@ -2863,14 +3014,39 @@ function setupEventListeners() {
             }
         });
     }
+
+    if (recurringSelect) {
+        recurringSelect.addEventListener('change', () => {
+            const id = recurringSelect.value;
+            if (!id) return;
+            const rp = RecurringPlayers.find(p => p.id === id);
+            if (!rp || !rp.name) return;
+
+            if (addPlayer(rp.name)) {
+                recurringSelect.value = '';
+                renderRecurringPlayersDropdown();
+            }
+        });
+    }
     
     // Remove player buttons (delegated)
     document.addEventListener('click', (e) => {
-        if (e.target.classList.contains('remove-player-btn')) {
-            const playerId = e.target.getAttribute('data-player-id');
-            if (playerId) {
-                removePlayer(playerId);
+        const target = e.target;
+        if (!target || !target.classList) return;
+        if (target.classList.contains('remove-player-btn')) {
+            const playerId = target.getAttribute('data-player-id');
+            if (playerId) removePlayer(playerId);
+            return;
+        }
+        if (target.hasAttribute('data-recurring-id')) {
+            const recurringId = target.getAttribute('data-recurring-id');
+            if (recurringId) {
+                RecurringPlayers = RecurringPlayers.filter(p => p.id !== recurringId);
+                saveRecurringPlayers();
+                renderSettings();
+                renderRecurringPlayersDropdown();
             }
+            return;
         }
     });
     
@@ -3040,9 +3216,38 @@ function setupEventListeners() {
     if (goalkeeperList) {
         goalkeeperList.addEventListener('click', (e) => {
             const target = e.target;
-            if (target && target.classList.contains('remove-goalkeeper-btn')) {
-                const id = target.getAttribute('data-goalkeeper-id');
-                removeGoalkeeper(id);
+            if (target && target.classList && target.classList.contains('remove-goalkeeper-btn') &&
+                target.hasAttribute('data-goalkeeper-id')) {
+                removeGoalkeeper(target.getAttribute('data-goalkeeper-id'));
+            }
+        });
+    }
+
+    const recurringManageToggleBtn = document.getElementById('recurring-manage-toggle-btn');
+    if (recurringManageToggleBtn) {
+        recurringManageToggleBtn.addEventListener('click', () => {
+            recurringManageOpen = !recurringManageOpen;
+            updateRecurringManageUI();
+        });
+    }
+
+    const recurringPlayerNameInput = document.getElementById('recurring-player-name-input');
+    const addRecurringPlayerBtn = document.getElementById('add-recurring-player-btn');
+    if (addRecurringPlayerBtn && recurringPlayerNameInput) {
+        addRecurringPlayerBtn.addEventListener('click', () => {
+            if (addRecurringPlayerFromSettings(recurringPlayerNameInput.value)) {
+                recurringPlayerNameInput.value = '';
+                recurringPlayerNameInput.focus();
+            }
+        });
+    }
+    if (recurringPlayerNameInput) {
+        recurringPlayerNameInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                if (addRecurringPlayerFromSettings(recurringPlayerNameInput.value)) {
+                    recurringPlayerNameInput.value = '';
+                }
             }
         });
     }
@@ -3150,6 +3355,16 @@ function setupEventListeners() {
             startGame();
         });
     }
+
+    const finishSessionTeamSelectionBtn = document.getElementById('finish-session-team-selection-btn');
+    if (finishSessionTeamSelectionBtn) {
+        finishSessionTeamSelectionBtn.addEventListener('click', () => {
+            if (confirm('Finish this session without playing this game? You will see today\'s stats.')) {
+                AppState.currentGame = null;
+                finishSession();
+            }
+        });
+    }
     
     // Game In Progress Screen
     const viewTeamsBtn = document.getElementById('view-teams-btn');
@@ -3158,6 +3373,17 @@ function setupEventListeners() {
     const undoGoalBtn = document.getElementById('undo-goal-btn');
     const endGameBtn = document.getElementById('end-game-btn');
     
+    const backToTeamSelectionBtn = document.getElementById('back-to-team-selection-btn');
+    if (backToTeamSelectionBtn) {
+        backToTeamSelectionBtn.addEventListener('click', () => {
+            AppState.currentGame = null;
+            AppState.viewingTeamsFromGame = false;
+            saveSession();
+            renderTeamSelection();
+            showScreen('team-selection');
+        });
+    }
+
     if (viewTeamsBtn) {
         viewTeamsBtn.addEventListener('click', () => {
             AppState.viewingTeamsFromGame = true;

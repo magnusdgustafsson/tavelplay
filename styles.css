@@ -209,6 +209,25 @@ body {
     justify-content: center;
 }
 
+/* Recurring dropdown: same size/alignment as player name input */
+.player-name-input-style {
+    flex: 1;
+    max-width: 400px;
+    padding: 15px;
+    font-size: 16px;
+    border: 2px solid #404040;
+    border-radius: 8px;
+    background-color: #a0a0a0;
+    color: #000;
+    font-family: 'Press Start 2P', 'Courier New', Courier, monospace;
+    cursor: pointer;
+}
+
+.player-entry-recurring-spacer {
+    flex: 0 0 auto;
+    min-width: 140px;
+}
+
 #player-name-input {
     flex: 1;
     max-width: 400px;
@@ -312,6 +331,38 @@ body {
 
 .toggle-label span:first-child {
     flex: 1;
+}
+
+.recurring-players-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 15px;
+}
+
+.recurring-players-header h3 {
+    margin: 0;
+    font-size: 14px;
+    color: #000;
+}
+
+.recurring-players-manage {
+    margin-top: 15px;
+    padding: 15px;
+    background-color: #d0d0d0;
+    border: 2px solid #404040;
+    border-radius: 5px;
+}
+
+.recurring-players-manage label {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 12px;
+    color: #000;
+}
+
+.recurring-players-manage .goalkeeper-list {
+    margin-top: 15px;
 }
 
 .toggle-switch {
