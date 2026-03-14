@@ -29,7 +29,8 @@ const AppState = {
         assist: null
     },
     viewingTeamsFromGame: false,
-    todaysStatsView: 'field' // 'field' | 'gk'
+    todaysStatsView: 'field', // 'field' | 'gk'
+    editingGameIndex: null // index into gameHistory when editing from View Games
 };
 
 // Recurring players are stored separately from the session so they
@@ -39,6 +40,7 @@ const RECURRING_PLAYERS_STORAGE_KEY = 'floorballRecurringPlayers';
 let recurringManageOpen = false;
 
 let teamSelectionCountdownInterval = null;
+let startGameCountdownInterval = null;
 
 // Initialize App
 function initApp() {
@@ -70,7 +72,7 @@ function loadSession() {
     if (saved) {
         const data = JSON.parse(saved);
         AppState.players = data.players || [];
-        // Ensure all players have active property and MVP fields for backwards compatibility
+        // Ensure all players have active property and MVP / plusMinus fields for backwards compatibility
         AppState.players.forEach(player => {
             if (player.active === undefined) {
                 player.active = true;
@@ -86,6 +88,9 @@ function loadSession() {
             }
             if (player.gamesPlayed === undefined) {
                 player.gamesPlayed = 0;
+            }
+            if (player.plusMinus === undefined) {
+                player.plusMinus = 0;
             }
         });
         AppState.goalkeepers = (data.goalkeepers || []).map(gk => {
@@ -275,6 +280,7 @@ function showScreen(screenId) {
         updateTeamSelectionFooter();
     } else {
         clearTeamSelectionCountdown();
+        clearStartGameCountdown();
     }
     
     // Hide modal if showing a new screen
@@ -290,8 +296,62 @@ function clearTeamSelectionCountdown() {
     }
 }
 
+function clearStartGameCountdown() {
+    if (startGameCountdownInterval !== null) {
+        clearInterval(startGameCountdownInterval);
+        startGameCountdownInterval = null;
+    }
+    const startGameBtn = document.getElementById('start-game-btn');
+    if (startGameBtn) {
+        startGameBtn.textContent = 'Start Game';
+    }
+}
+
+function startStartGameCountdown() {
+    const viewingFromGame = AppState.viewingTeamsFromGame && AppState.currentGame;
+    if (viewingFromGame) {
+        clearStartGameCountdown();
+        return;
+    }
+
+    const startGameBtn = document.getElementById('start-game-btn');
+    if (!startGameBtn || startGameBtn.style.display === 'none') {
+        clearStartGameCountdown();
+        return;
+    }
+
+    clearStartGameCountdown();
+
+    let seconds = 60;
+    startGameBtn.textContent = `Start Game (${seconds})`;
+
+    startGameCountdownInterval = setInterval(() => {
+        seconds--;
+        if (seconds <= 0) {
+            clearStartGameCountdown();
+            if (AppState.currentScreen === 'team-selection') {
+                startGame();
+            }
+            return;
+        }
+        if (!document.body.contains(startGameBtn)) {
+            clearStartGameCountdown();
+            return;
+        }
+        startGameBtn.textContent = `Start Game (${seconds})`;
+    }, 1000);
+}
+
+function restartStartGameCountdownIfNeeded() {
+    const viewingFromGame = AppState.viewingTeamsFromGame && AppState.currentGame;
+    if (AppState.currentScreen === 'team-selection' && !viewingFromGame) {
+        startStartGameCountdown();
+    }
+}
+
 function updateTeamSelectionFooter() {
     clearTeamSelectionCountdown();
+    clearStartGameCountdown();
     const backToGameBtn = document.getElementById('back-to-game-btn');
     const backToEntriesBtn = document.getElementById('back-to-entries-btn');
     const rematchBtn = document.getElementById('rematch-btn');
@@ -325,6 +385,8 @@ function updateTeamSelectionFooter() {
             }
             backToGameBtn.textContent = `Back to Game (${seconds})`;
         }, 1000);
+    } else {
+        startStartGameCountdown();
     }
 }
 
@@ -363,6 +425,7 @@ function addPlayer(name) {
         pointsInWins: 0,
         decisiveGoals: 0,
         decisiveAssists: 0,
+        plusMinus: 0,
         active: true
     };
     
@@ -415,6 +478,20 @@ function getActivePlayers() {
     // Return only active players for team selection
     // Handle backwards compatibility: if active property doesn't exist, assume active
     return AppState.players.filter(p => p.active !== false);
+}
+
+function isPlusMinusFairConfig() {
+    // Fair config: starting lineup enabled, 3–5 players per side, and exactly 2N active players
+    if (!AppState.settings || !AppState.settings.startingLineupEnabled) return false;
+    const N = AppState.settings.startingLineupCount || 0;
+    if (N < 3 || N > 5) return false;
+    const activePlayers = getActivePlayers();
+    return activePlayers.length === 2 * N;
+}
+
+function isPlusMinusActiveForSession() {
+    const games = AppState.gameHistory || [];
+    return games.some(game => game && game.plusMinusEnabled);
 }
 
 // Team Randomization
@@ -508,6 +585,7 @@ function startGame() {
     AppState.teamEditMode = false;
     
     const gameNumber = AppState.gameHistory.length + 1;
+    const plusMinusEnabled = isPlusMinusFairConfig();
     AppState.currentGame = {
         gameNumber: gameNumber,
         blackTeam: AppState.currentTeams.blackTeam,
@@ -518,7 +596,8 @@ function startGame() {
         whiteScore: 0,
         goals: [],
         playerGoals: {}, // Track goals per player in this game for hattricks
-        playerPoints: {} // Track points per player in this game for MVP calculation
+        playerPoints: {}, // Track points per player in this game for MVP calculation
+        plusMinusEnabled: plusMinusEnabled
     };
     
     AppState.sessionActive = true;
@@ -599,6 +678,28 @@ function registerGoal(team, scorer, assist) {
         }
     }
     
+    // Update plus/minus if enabled for this game
+    if (AppState.currentGame.plusMinusEnabled) {
+        const blackTeam = AppState.currentGame.blackTeam || [];
+        const whiteTeam = AppState.currentGame.whiteTeam || [];
+        const scoringTeam = team === 'black' ? blackTeam : whiteTeam;
+        const concedingTeam = team === 'black' ? whiteTeam : blackTeam;
+        
+        scoringTeam.forEach(playerObj => {
+            const p = AppState.players.find(pl => pl.id === playerObj.id);
+            if (p && typeof p.plusMinus === 'number') {
+                p.plusMinus += 1;
+            }
+        });
+        
+        concedingTeam.forEach(playerObj => {
+            const p = AppState.players.find(pl => pl.id === playerObj.id);
+            if (p && typeof p.plusMinus === 'number') {
+                p.plusMinus -= 1;
+            }
+        });
+    }
+    
     saveSession();
     renderGameProgress();
     hideModal();
@@ -656,6 +757,28 @@ function undoLastGoal() {
                 delete AppState.currentGame.playerPoints[assist];
             }
         }
+    }
+    
+    // Revert plus/minus if enabled for this game
+    if (AppState.currentGame.plusMinusEnabled) {
+        const blackTeam = AppState.currentGame.blackTeam || [];
+        const whiteTeam = AppState.currentGame.whiteTeam || [];
+        const scoringTeam = team === 'black' ? blackTeam : whiteTeam;
+        const concedingTeam = team === 'black' ? whiteTeam : blackTeam;
+        
+        scoringTeam.forEach(playerObj => {
+            const p = AppState.players.find(pl => pl.id === playerObj.id);
+            if (p && typeof p.plusMinus === 'number') {
+                p.plusMinus -= 1;
+            }
+        });
+        
+        concedingTeam.forEach(playerObj => {
+            const p = AppState.players.find(pl => pl.id === playerObj.id);
+            if (p && typeof p.plusMinus === 'number') {
+                p.plusMinus += 1;
+            }
+        });
     }
     
     saveSession();
@@ -852,6 +975,228 @@ function endGame() {
     showScreen('game-summary');
 }
 
+function resetAllStatsFromHistory() {
+    const players = AppState.players || [];
+    const goalkeepers = AppState.goalkeepers || [];
+    const games = AppState.gameHistory || [];
+
+    // Reset player stats
+    players.forEach(player => {
+        player.gamesWon = 0;
+        player.gamesPlayed = 0;
+        player.points = 0;
+        player.goals = 0;
+        player.assists = 0;
+        player.hattricks = 0;
+        player.pointsInWins = 0;
+        player.decisiveGoals = 0;
+        player.decisiveAssists = 0;
+        player.plusMinus = 0;
+    });
+
+    // Reset goalkeeper stats
+    goalkeepers.forEach(gk => {
+        gk.gamesAsGK = 0;
+        gk.goalsConceded = 0;
+        gk.cleanSheets = 0;
+        gk.winsAsGK = 0;
+    });
+
+    // Rebuild stats by replaying all games in chronological order
+    games.forEach((game, index) => {
+        if (!game) return;
+
+        game.gameNumber = index + 1;
+        game.playerGoals = {};
+        game.playerPoints = {};
+
+        let blackScore = 0;
+        let whiteScore = 0;
+
+        const goals = Array.isArray(game.goals) ? game.goals : [];
+        const plusMinusEnabled = !!game.plusMinusEnabled;
+
+        goals.forEach(goal => {
+            if (!goal || !goal.scorer || (goal.team !== 'black' && goal.team !== 'white')) {
+                return;
+            }
+
+            if (goal.team === 'black') {
+                blackScore++;
+            } else {
+                whiteScore++;
+            }
+
+            const scorerId = goal.scorer;
+            if (!game.playerGoals[scorerId]) {
+                game.playerGoals[scorerId] = 0;
+            }
+            game.playerGoals[scorerId]++;
+
+            const scorerPlayer = players.find(p => p.id === scorerId);
+            if (scorerPlayer) {
+                scorerPlayer.goals = (scorerPlayer.goals || 0) + 1;
+                scorerPlayer.points = (scorerPlayer.points || 0) + 1;
+                if (!game.playerPoints[scorerId]) {
+                    game.playerPoints[scorerId] = 0;
+                }
+                game.playerPoints[scorerId]++;
+            }
+
+            const assistId = goal.assist;
+            if (assistId && assistId !== 'NONE') {
+                const assistPlayer = players.find(p => p.id === assistId);
+                if (assistPlayer) {
+                    assistPlayer.assists = (assistPlayer.assists || 0) + 1;
+                    assistPlayer.points = (assistPlayer.points || 0) + 1;
+                    if (!game.playerPoints[assistId]) {
+                        game.playerPoints[assistId] = 0;
+                    }
+                    game.playerPoints[assistId]++;
+                }
+            }
+            
+            // Apply plus/minus for this goal if enabled on this game
+            if (plusMinusEnabled) {
+                const blackTeam = Array.isArray(game.blackTeam) ? game.blackTeam : [];
+                const whiteTeam = Array.isArray(game.whiteTeam) ? game.whiteTeam : [];
+                const scoringTeam = goal.team === 'black' ? blackTeam : whiteTeam;
+                const concedingTeam = goal.team === 'black' ? whiteTeam : blackTeam;
+                
+                scoringTeam.forEach(playerObj => {
+                    const p = players.find(pl => pl.id === playerObj.id);
+                    if (p) {
+                        p.plusMinus = (p.plusMinus || 0) + 1;
+                    }
+                });
+                
+                concedingTeam.forEach(playerObj => {
+                    const p = players.find(pl => pl.id === playerObj.id);
+                    if (p) {
+                        p.plusMinus = (p.plusMinus || 0) - 1;
+                    }
+                });
+            }
+        });
+
+        // Hattricks: one per game per player if they scored at least 3
+        Object.keys(game.playerGoals).forEach(playerId => {
+            const count = game.playerGoals[playerId];
+            if (count >= 3) {
+                const player = players.find(p => p.id === playerId);
+                if (player) {
+                    player.hattricks = (player.hattricks || 0) + 1;
+                }
+            }
+        });
+
+        game.blackScore = blackScore;
+        game.whiteScore = whiteScore;
+
+        const blackTeam = Array.isArray(game.blackTeam) ? game.blackTeam : [];
+        const whiteTeam = Array.isArray(game.whiteTeam) ? game.whiteTeam : [];
+
+        blackTeam.forEach(playerObj => {
+            const p = players.find(pl => pl.id === playerObj.id);
+            if (p) {
+                p.gamesPlayed = (p.gamesPlayed || 0) + 1;
+            }
+        });
+
+        whiteTeam.forEach(playerObj => {
+            const p = players.find(pl => pl.id === playerObj.id);
+            if (p) {
+                p.gamesPlayed = (p.gamesPlayed || 0) + 1;
+            }
+        });
+
+        let winningTeam = null;
+        if (blackScore > whiteScore) {
+            winningTeam = 'black';
+        } else if (whiteScore > blackScore) {
+            winningTeam = 'white';
+        }
+
+        if (winningTeam === 'black') {
+            blackTeam.forEach(playerObj => {
+                const p = players.find(pl => pl.id === playerObj.id);
+                if (p) {
+                    p.gamesWon = (p.gamesWon || 0) + 1;
+                }
+            });
+        } else if (winningTeam === 'white') {
+            whiteTeam.forEach(playerObj => {
+                const p = players.find(pl => pl.id === playerObj.id);
+                if (p) {
+                    p.gamesWon = (p.gamesWon || 0) + 1;
+                }
+            });
+        }
+
+        if (winningTeam) {
+            const winningTeamPlayers = winningTeam === 'black' ? blackTeam : whiteTeam;
+            winningTeamPlayers.forEach(playerObj => {
+                const pid = playerObj.id;
+                const p = players.find(pl => pl.id === pid);
+                const ptsInGame = game.playerPoints[pid] || 0;
+                if (p && ptsInGame > 0) {
+                    p.pointsInWins = (p.pointsInWins || 0) + ptsInGame;
+                }
+            });
+        }
+
+        // Goalkeeper stats: based on presence of GK ids in the stored game
+        const blackGKId = game.blackGKId || null;
+        const whiteGKId = game.whiteGKId || null;
+
+        if (blackGKId) {
+            const gk = goalkeepers.find(g => g.id === blackGKId);
+            if (gk) {
+                gk.gamesAsGK = (gk.gamesAsGK || 0) + 1;
+                gk.goalsConceded = (gk.goalsConceded || 0) + (whiteScore || 0);
+                if (whiteScore === 0) {
+                    gk.cleanSheets = (gk.cleanSheets || 0) + 1;
+                }
+                if (winningTeam === 'black') {
+                    gk.winsAsGK = (gk.winsAsGK || 0) + 1;
+                }
+            }
+        }
+
+        if (whiteGKId) {
+            const gk = goalkeepers.find(g => g.id === whiteGKId);
+            if (gk) {
+                gk.gamesAsGK = (gk.gamesAsGK || 0) + 1;
+                gk.goalsConceded = (gk.goalsConceded || 0) + (blackScore || 0);
+                if (blackScore === 0) {
+                    gk.cleanSheets = (gk.cleanSheets || 0) + 1;
+                }
+                if (winningTeam === 'white') {
+                    gk.winsAsGK = (gk.winsAsGK || 0) + 1;
+                }
+            }
+        }
+
+        // Decisive goal index and related stats
+        game.decisiveGoalIndex = calculateDecisiveGoal(game);
+        if (game.decisiveGoalIndex !== null && game.decisiveGoalIndex !== undefined) {
+            const decisiveGoal = goals[game.decisiveGoalIndex];
+            if (decisiveGoal && decisiveGoal.scorer) {
+                const decisiveScorer = players.find(p => p.id === decisiveGoal.scorer);
+                if (decisiveScorer) {
+                    decisiveScorer.decisiveGoals = (decisiveScorer.decisiveGoals || 0) + 1;
+                }
+                if (decisiveGoal.assist && decisiveGoal.assist !== 'NONE') {
+                    const decisiveAssister = players.find(p => p.id === decisiveGoal.assist);
+                    if (decisiveAssister) {
+                        decisiveAssister.decisiveAssists = (decisiveAssister.decisiveAssists || 0) + 1;
+                    }
+                }
+            }
+        }
+    });
+}
+
 function finishSession() {
     AppState.sessionActive = false;
     AppState.todaysStatsView = 'field';
@@ -919,11 +1264,13 @@ function updateStandings() {
     
     // Sort players
     const sortedPlayers = [...AppState.players].sort(sortPlayers);
+    const plusMinusActive = isPlusMinusActiveForSession();
     
     tbody.innerHTML = '';
     
     sortedPlayers.forEach(player => {
         const row = document.createElement('tr');
+        const plusMinusCell = plusMinusActive ? `<td>${typeof player.plusMinus === 'number' ? player.plusMinus : 0}</td>` : '';
         row.innerHTML = `
             <td>${escapeHtml(player.name)}</td>
             <td>${player.gamesWon}/${player.gamesPlayed}</td>
@@ -931,6 +1278,7 @@ function updateStandings() {
             <td>${player.goals}</td>
             <td>${player.assists}</td>
             <td>${'🎩'.repeat(player.hattricks)}</td>
+            ${plusMinusCell}
         `;
         tbody.appendChild(row);
     });
@@ -942,9 +1290,27 @@ function renderStandingsSidebar() {
     
     const h2 = sidebar.querySelector('h2');
     const container = sidebar.querySelector('.standings-table-container');
+    const table = sidebar.querySelector('.standings-table');
+    const plusMinusActive = isPlusMinusActiveForSession();
     
     if (h2) h2.textContent = 'Standings';
     if (container) container.style.display = 'block';
+    if (table) {
+        const thead = table.querySelector('thead');
+        if (thead) {
+            thead.innerHTML = `
+                <tr>
+                    <th>Player</th>
+                    <th>GW/GP</th>
+                    <th>Pts</th>
+                    <th>G</th>
+                    <th>A</th>
+                    <th>🎩</th>
+                    ${plusMinusActive ? '<th>+/−</th>' : ''}
+                </tr>
+            `;
+        }
+    }
     
     // Hide legends if they exist
     const legendsContainer = sidebar.querySelector('.legends-container');
@@ -1001,6 +1367,7 @@ function renderLegends() {
 // Rendering Functions
 function renderPlayerEntries() {
     const playerList = document.getElementById('player-list');
+    const titleEl = document.getElementById('player-entries-title');
     const continueBtn = document.getElementById('continue-btn');
     
     if (!playerList) return;
@@ -1021,6 +1388,14 @@ function renderPlayerEntries() {
         `;
         playerList.appendChild(item);
     });
+
+    // Update Player Entries title with count of players
+    if (titleEl) {
+        const totalCount = AppState.players.length;
+        titleEl.textContent = totalCount > 0
+            ? `Player Entries (${totalCount})`
+            : 'Player Entries';
+    }
     
     // Enable continue button if at least 2 active players
     const activeCount = getActivePlayers().length;
@@ -1662,6 +2037,249 @@ function renderGameProgress() {
         const isZeroZero = AppState.currentGame.blackScore === 0 && AppState.currentGame.whiteScore === 0;
         backToTeamSelectionBtn.style.display = isZeroZero ? '' : 'none';
     }
+}
+
+function renderGamesHistory() {
+    const list = document.getElementById('games-history-list');
+    if (!list) return;
+
+    const games = AppState.gameHistory || [];
+    list.innerHTML = '';
+
+    if (!games.length) {
+        const empty = document.createElement('div');
+        empty.className = 'game-item';
+        empty.textContent = 'No games played yet.';
+        list.appendChild(empty);
+        return;
+    }
+
+    const items = games.map((game, index) => ({ game, index })).reverse();
+
+    items.forEach(({ game, index }) => {
+        if (!game) return;
+        const item = document.createElement('div');
+        item.className = 'game-item';
+        item.setAttribute('data-game-index', String(index));
+
+        const blackScore = typeof game.blackScore === 'number' ? game.blackScore : 0;
+        const whiteScore = typeof game.whiteScore === 'number' ? game.whiteScore : 0;
+        const gameNumber = game.gameNumber || (index + 1);
+
+        const header = document.createElement('div');
+        header.className = 'game-item-header';
+        header.innerHTML = `
+            <div class="game-item-title">Game ${gameNumber}</div>
+            <div class="game-item-score">${getTeamNameShort('black')} ${blackScore} - ${whiteScore} ${getTeamNameShort('white')}</div>
+        `;
+        item.appendChild(header);
+
+        const goalsCount = Array.isArray(game.goals) ? game.goals.length : 0;
+        const meta = document.createElement('div');
+        meta.className = 'game-item-meta';
+        meta.textContent = `${goalsCount} goal${goalsCount === 1 ? '' : 's'}`;
+        item.appendChild(meta);
+
+        const isEditing = AppState.editingGameIndex === index;
+
+        if (isEditing) {
+            const editSection = document.createElement('div');
+            editSection.className = 'game-edit-section';
+
+            const scoresRow = document.createElement('div');
+            scoresRow.className = 'game-edit-scores';
+            scoresRow.innerHTML = `
+                <span class="game-goal-label">${getTeamNameShort('black')} score:</span>
+                <input type="number" class="game-score-input" data-team="black" min="0" value="${blackScore}">
+                <span class="game-goal-label">${getTeamNameShort('white')} score:</span>
+                <input type="number" class="game-score-input" data-team="white" min="0" value="${whiteScore}">
+            `;
+            editSection.appendChild(scoresRow);
+
+            const goalsList = document.createElement('div');
+            goalsList.className = 'game-goals-list';
+
+            const gamePlayersMap = {};
+            const addPlayersFromTeam = (teamArr) => {
+                (teamArr || []).forEach(p => {
+                    if (p && p.id && !gamePlayersMap[p.id]) {
+                        gamePlayersMap[p.id] = p.name || 'Player';
+                    }
+                });
+            };
+            addPlayersFromTeam(game.blackTeam);
+            addPlayersFromTeam(game.whiteTeam);
+            const gamePlayers = Object.keys(gamePlayersMap).map(id => ({ id, name: gamePlayersMap[id] }));
+
+            (game.goals || []).forEach((goal, goalIndex) => {
+                const row = document.createElement('div');
+                row.className = 'game-goal-row';
+                row.setAttribute('data-goal-index', String(goalIndex));
+
+                const teamSelectOptions = `
+                    <option value="black"${goal.team === 'black' ? ' selected' : ''}>${getTeamNameShort('black')}</option>
+                    <option value="white"${goal.team === 'white' ? ' selected' : ''}>${getTeamNameShort('white')}</option>
+                `;
+
+                const scorerOptions = gamePlayers.map(p => {
+                    const selected = goal.scorer === p.id ? ' selected' : '';
+                    return `<option value="${p.id}"${selected}>${escapeHtml(p.name)}</option>`;
+                }).join('');
+
+                const assistOptions = [
+                    `<option value="">None</option>`,
+                    gamePlayers.map(p => {
+                        const selected = goal.assist === p.id ? ' selected' : '';
+                        return `<option value="${p.id}"${selected}>${escapeHtml(p.name)}</option>`;
+                    }).join('')
+                ].join('');
+
+                row.innerHTML = `
+                    <span class="game-goal-label">Goal ${goalIndex + 1}:</span>
+                    <select class="game-goal-team-select">
+                        ${teamSelectOptions}
+                    </select>
+                    <select class="game-goal-scorer-select">
+                        ${scorerOptions}
+                    </select>
+                    <select class="game-goal-assist-select">
+                        ${assistOptions}
+                    </select>
+                `;
+
+                goalsList.appendChild(row);
+            });
+
+            editSection.appendChild(goalsList);
+
+            const footer = document.createElement('div');
+            footer.className = 'game-item-footer';
+            footer.innerHTML = `
+                <button class="btn-secondary game-cancel-edit-btn">Cancel</button>
+                <button class="btn-primary game-save-edit-btn">Save</button>
+            `;
+
+            editSection.appendChild(footer);
+            item.appendChild(editSection);
+        } else {
+            const footer = document.createElement('div');
+            footer.className = 'game-item-footer';
+            footer.innerHTML = `
+                <button class="btn-secondary game-edit-btn">Edit</button>
+                <button class="btn-secondary game-delete-btn">Delete</button>
+            `;
+            item.appendChild(footer);
+        }
+
+        list.appendChild(item);
+
+        if (!isEditing) {
+            const editBtn = item.querySelector('.game-edit-btn');
+            const deleteBtn = item.querySelector('.game-delete-btn');
+            if (editBtn) {
+                editBtn.addEventListener('click', () => {
+                    AppState.editingGameIndex = index;
+                    renderGamesHistory();
+                });
+            }
+            if (deleteBtn) {
+                deleteBtn.addEventListener('click', () => {
+                    if (!confirm('Delete this game permanently? This will update all stats.')) {
+                        return;
+                    }
+                    const gameIndex = index;
+                    if (gameIndex >= 0 && gameIndex < AppState.gameHistory.length) {
+                        AppState.gameHistory.splice(gameIndex, 1);
+                        AppState.editingGameIndex = null;
+                        resetAllStatsFromHistory();
+                        saveSession();
+                        updateStandings();
+                        renderGamesHistory();
+                    }
+                });
+            }
+        } else {
+            const cancelBtn = item.querySelector('.game-cancel-edit-btn');
+            const saveBtn = item.querySelector('.game-save-edit-btn');
+            if (cancelBtn) {
+                cancelBtn.addEventListener('click', () => {
+                    AppState.editingGameIndex = null;
+                    renderGamesHistory();
+                });
+            }
+            if (saveBtn) {
+                saveBtn.addEventListener('click', () => {
+                    const gameIndex = index;
+                    const originalGame = AppState.gameHistory[gameIndex];
+                    if (!originalGame) return;
+
+                    const scoreInputs = item.querySelectorAll('.game-score-input');
+                    let newBlackScore = 0;
+                    let newWhiteScore = 0;
+                    scoreInputs.forEach(input => {
+                        const team = input.getAttribute('data-team');
+                        const value = parseInt(input.value, 10);
+                        const safeValue = isNaN(value) || value < 0 ? 0 : value;
+                        if (team === 'black') {
+                            newBlackScore = safeValue;
+                        } else if (team === 'white') {
+                            newWhiteScore = safeValue;
+                        }
+                    });
+
+                    const goalRows = item.querySelectorAll('.game-goal-row');
+                    const newGoals = [];
+                    let blackGoalsCount = 0;
+                    let whiteGoalsCount = 0;
+
+                    goalRows.forEach(row => {
+                        const teamSelect = row.querySelector('.game-goal-team-select');
+                        const scorerSelect = row.querySelector('.game-goal-scorer-select');
+                        const assistSelect = row.querySelector('.game-goal-assist-select');
+                        if (!teamSelect || !scorerSelect || !assistSelect) {
+                            return;
+                        }
+                        const team = teamSelect.value === 'white' ? 'white' : 'black';
+                        const scorer = scorerSelect.value;
+                        const assistValue = assistSelect.value;
+                        if (!scorer) {
+                            return;
+                        }
+                        if (team === 'black') {
+                            blackGoalsCount++;
+                        } else {
+                            whiteGoalsCount++;
+                        }
+                        newGoals.push({
+                            team,
+                            scorer,
+                            assist: assistValue || null,
+                            timestamp: Date.now()
+                        });
+                    });
+
+                    if (blackGoalsCount !== newBlackScore || whiteGoalsCount !== newWhiteScore) {
+                        alert('Final score must match the number of goals for each team.');
+                        return;
+                    }
+
+                    const updatedGame = {
+                        ...originalGame,
+                        blackScore: newBlackScore,
+                        whiteScore: newWhiteScore,
+                        goals: newGoals
+                    };
+
+                    AppState.gameHistory[gameIndex] = updatedGame;
+                    AppState.editingGameIndex = null;
+                    resetAllStatsFromHistory();
+                    saveSession();
+                    updateStandings();
+                    renderGamesHistory();
+                });
+            }
+        }
+    });
 }
 
 function renderGoalRegistration(team) {
@@ -2712,6 +3330,7 @@ function renderTodaysStats() {
     if (table) table.style.fontSize = '';
 
     const view = AppState.todaysStatsView || 'field';
+    const plusMinusActive = isPlusMinusActiveForSession();
 
     // Update header based on view
     if (table) {
@@ -2727,6 +3346,7 @@ function renderTodaysStats() {
                         <th>Pts</th>
                         <th>G</th>
                         <th>A</th>
+                        ${plusMinusActive ? '<th>+/−</th>' : ''}
                     </tr>
                 `;
             } else {
@@ -2757,6 +3377,7 @@ function renderTodaysStats() {
             const playerAwards = awards[player.id] || [];
             const awardsDisplay = playerAwards.map(iconId => getAwardIconHTML(iconId)).join(' ');
 
+            const plusMinusCell = plusMinusActive ? `<td>${typeof player.plusMinus === 'number' ? player.plusMinus : 0}</td>` : '';
             row.innerHTML = `
                 <td>${rank}</td>
                 <td>${escapeHtml(player.name)}</td>
@@ -2765,6 +3386,7 @@ function renderTodaysStats() {
                 <td>${player.points}</td>
                 <td>${player.goals}</td>
                 <td>${player.assists}</td>
+                ${plusMinusCell}
             `;
             tbody.appendChild(row);
         });
@@ -3298,12 +3920,14 @@ function setupEventListeners() {
     
     if (rematchBtn) {
         rematchBtn.addEventListener('click', () => {
+            restartStartGameCountdownIfNeeded();
             playRematch();
         });
     }
     
     if (editTeamsBtn) {
         editTeamsBtn.addEventListener('click', () => {
+            restartStartGameCountdownIfNeeded();
             toggleTeamEditMode();
         });
     }
@@ -3311,6 +3935,7 @@ function setupEventListeners() {
     const swapSidesBtn = document.getElementById('swap-sides-btn');
     if (swapSidesBtn) {
         swapSidesBtn.addEventListener('click', () => {
+            restartStartGameCountdownIfNeeded();
             swapTeamSides();
         });
     }
@@ -3319,6 +3944,7 @@ function setupEventListeners() {
     if (backToGameBtn) {
         backToGameBtn.addEventListener('click', () => {
             clearTeamSelectionCountdown();
+            clearStartGameCountdown();
             AppState.viewingTeamsFromGame = false;
             showScreen('game-progress');
         });
@@ -3327,6 +3953,7 @@ function setupEventListeners() {
     // Move player buttons (delegated)
     document.addEventListener('click', (e) => {
         if (e.target.classList.contains('move-player-btn')) {
+            restartStartGameCountdownIfNeeded();
             const playerId = e.target.getAttribute('data-player-id');
             const fromTeam = e.target.getAttribute('data-from-team');
             const toTeam = e.target.getAttribute('data-to-team');
@@ -3335,6 +3962,7 @@ function setupEventListeners() {
             }
         }
         if (e.target.classList.contains('remove-from-teams-btn')) {
+            restartStartGameCountdownIfNeeded();
             const playerId = e.target.getAttribute('data-player-id');
             if (playerId && AppState.currentTeams) {
                 const player = AppState.players.find(p => p.id === playerId);
@@ -3393,6 +4021,9 @@ function setupEventListeners() {
     
     if (undoGoalBtn) {
         undoGoalBtn.addEventListener('click', () => {
+            if (!confirm('Undo the last registered goal?')) {
+                return;
+            }
             undoLastGoal();
         });
     }
@@ -3468,6 +4099,7 @@ function setupEventListeners() {
     // Game Summary Screen
     const proceedBtn = document.getElementById('proceed-btn');
     const finishSessionBtn = document.getElementById('finish-session-btn');
+    const viewGamesBtn = document.getElementById('view-games-btn');
     
     if (proceedBtn) {
         proceedBtn.addEventListener('click', () => {
@@ -3481,6 +4113,23 @@ function setupEventListeners() {
             if (confirm('Finish this session? You will see today\'s final stats.')) {
                 finishSession();
             }
+        });
+    }
+
+    if (viewGamesBtn) {
+        viewGamesBtn.addEventListener('click', () => {
+            AppState.editingGameIndex = null;
+            renderGamesHistory();
+            showScreen('games-history');
+        });
+    }
+    
+    // Games History Screen
+    const gamesHistoryBackBtn = document.getElementById('games-history-back-btn');
+    if (gamesHistoryBackBtn) {
+        gamesHistoryBackBtn.addEventListener('click', () => {
+            AppState.editingGameIndex = null;
+            showScreen('game-summary');
         });
     }
     

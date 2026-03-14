@@ -1148,6 +1148,112 @@ body {
     margin-right: 8px;
 }
 
+/* Games History Screen */
+.games-history-container {
+    flex: 1;
+    overflow-y: auto;
+    background-color: #a0a0a0;
+    border-radius: 12px;
+    border: 3px solid #404040;
+    padding: 20px;
+}
+
+.games-history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.game-item {
+    background-color: #c0c0c0;
+    border-radius: 8px;
+    border: 2px solid #404040;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 12px;
+}
+
+.game-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+
+.game-item-title {
+    font-weight: 600;
+}
+
+.game-item-score {
+    font-weight: 600;
+}
+
+.game-item-meta {
+    font-size: 10px;
+    color: #222;
+}
+
+.game-item-footer {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+}
+
+.game-edit-section {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #808080;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.game-edit-scores {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.game-score-input {
+    width: 70px;
+    padding: 6px 8px;
+    border: 2px solid #404040;
+    border-radius: 4px;
+    background-color: #f0f0f0;
+    font-family: 'Press Start 2P', 'Courier New', Courier, monospace;
+    font-size: 12px;
+}
+
+.game-goals-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.game-goal-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.game-goal-row select {
+    padding: 4px 6px;
+    border: 2px solid #404040;
+    border-radius: 4px;
+    background-color: #f0f0f0;
+    font-family: 'Press Start 2P', 'Courier New', Courier, monospace;
+    font-size: 10px;
+}
+
+.game-goal-label {
+    font-size: 10px;
+}
+
 /* Larger icons in Awards and Hattricks columns */
 .full-standings-table td.awards-cell,
 .full-standings-table td.hattricks-cell {
