@@ -505,32 +505,137 @@ function randomizeTeams() {
     const seenSignatures = new Set();
     const candidates = [];
 
+    const teamHistory = AppState.teamHistory || [];
+    const previousTeamsValid = !!(
+        AppState.previousTeams &&
+        Array.isArray(AppState.previousTeams.blackTeam) &&
+        Array.isArray(AppState.previousTeams.whiteTeam)
+    );
+
+    const targetSwitchPerDirection = (() => {
+        const n = activePlayers.length;
+        if (n >= 8 && n <= 11) return 2;
+        if (n >= 12) return 3;
+        return null;
+    })();
+
+    const canTargetMixing =
+        previousTeamsValid && targetSwitchPerDirection !== null;
+
+    const prevBlackIds = canTargetMixing
+        ? new Set(AppState.previousTeams.blackTeam.map(p => p.id))
+        : null;
+    const prevWhiteIds = canTargetMixing
+        ? new Set(AppState.previousTeams.whiteTeam.map(p => p.id))
+        : null;
+
+    // Prefer targeted mixing when possible; otherwise fall back to current heuristic.
     for (let attempt = 0; attempt < MAX_SHUFFLE_ATTEMPTS; attempt++) {
         const shuffled = [...activePlayers].sort(() => Math.random() - 0.5);
         const mid = Math.ceil(shuffled.length / 2);
         const blackTeam = shuffled.slice(0, mid);
         const whiteTeam = shuffled.slice(mid);
         const teamSignature = createTeamSignature(blackTeam, whiteTeam);
-        const variationScore = getVariationScore(blackTeam, whiteTeam);
-        candidates.push({ blackTeam, whiteTeam, teamSignature, variationScore });
+
+        // Keep candidate set bounded and avoid duplicate signatures.
+        if (seenSignatures.has(teamSignature)) continue;
         seenSignatures.add(teamSignature);
+
+        if (canTargetMixing) {
+            let switchedToBlack = 0;
+            for (const p of blackTeam) {
+                if (prevWhiteIds.has(p.id)) switchedToBlack++;
+            }
+
+            let switchedToWhite = 0;
+            for (const p of whiteTeam) {
+                if (prevBlackIds.has(p.id)) switchedToWhite++;
+            }
+
+            const penalty =
+                Math.abs(switchedToBlack - targetSwitchPerDirection) +
+                Math.abs(switchedToWhite - targetSwitchPerDirection);
+
+            const totalSwitches = switchedToBlack + switchedToWhite;
+
+            const candidate = {
+                blackTeam,
+                whiteTeam,
+                teamSignature,
+                switchedToBlack,
+                switchedToWhite,
+                totalSwitches,
+                penalty
+            };
+
+            // Early exit: exact target match and not forbidden by teamHistory.
+            if (penalty === 0 && !teamHistory.includes(teamSignature)) {
+                AppState.teamHistory.push(teamSignature);
+                if (AppState.teamHistory.length > 10) {
+                    AppState.teamHistory = [];
+                }
+                return { blackTeam: candidate.blackTeam, whiteTeam: candidate.whiteTeam };
+            }
+
+            candidates.push(candidate);
+        } else {
+            const variationScore = getVariationScore(blackTeam, whiteTeam);
+            candidates.push({ blackTeam, whiteTeam, teamSignature, variationScore });
+        }
+
         if (seenSignatures.size >= TARGET_CANDIDATES) break;
     }
 
-    const newLineups = candidates.filter(c => !AppState.teamHistory.includes(c.teamSignature));
-    const repeatLineups = candidates.filter(c => AppState.teamHistory.includes(c.teamSignature));
-    const pool = newLineups.length > 0 ? newLineups : repeatLineups;
+    if (canTargetMixing) {
+        const newLineups = candidates.filter(c => !teamHistory.includes(c.teamSignature));
+        const repeatLineups = candidates.filter(c => teamHistory.includes(c.teamSignature));
+        const pool = newLineups.length > 0 ? newLineups : repeatLineups;
 
-    const maxScore = Math.max(...pool.map(c => c.variationScore));
-    const bestCandidates = pool.filter(c => c.variationScore === maxScore);
-    const chosen = bestCandidates[Math.floor(Math.random() * bestCandidates.length)];
+        // Choose the candidate with the smallest penalty.
+        // Tie-break: prefer higher total switch count (feels more "mixed").
+        let bestPenalty = Infinity;
+        let bestTotalSwitches = -Infinity;
+        let bestCandidates = [];
 
-    AppState.teamHistory.push(chosen.teamSignature);
-    if (AppState.teamHistory.length > 10) {
-        AppState.teamHistory = [];
+        for (const c of pool) {
+            if (c.penalty < bestPenalty) {
+                bestPenalty = c.penalty;
+                bestTotalSwitches = c.totalSwitches;
+                bestCandidates = [c];
+            } else if (c.penalty === bestPenalty) {
+                if (c.totalSwitches > bestTotalSwitches) {
+                    bestTotalSwitches = c.totalSwitches;
+                    bestCandidates = [c];
+                } else if (c.totalSwitches === bestTotalSwitches) {
+                    bestCandidates.push(c);
+                }
+            }
+        }
+
+        const chosen = bestCandidates[Math.floor(Math.random() * bestCandidates.length)];
+
+        AppState.teamHistory.push(chosen.teamSignature);
+        if (AppState.teamHistory.length > 10) {
+            AppState.teamHistory = [];
+        }
+
+        return { blackTeam: chosen.blackTeam, whiteTeam: chosen.whiteTeam };
+    } else {
+        const newLineups = candidates.filter(c => !teamHistory.includes(c.teamSignature));
+        const repeatLineups = candidates.filter(c => teamHistory.includes(c.teamSignature));
+        const pool = newLineups.length > 0 ? newLineups : repeatLineups;
+
+        const maxScore = Math.max(...pool.map(c => c.variationScore));
+        const bestCandidates = pool.filter(c => c.variationScore === maxScore);
+        const chosen = bestCandidates[Math.floor(Math.random() * bestCandidates.length)];
+
+        AppState.teamHistory.push(chosen.teamSignature);
+        if (AppState.teamHistory.length > 10) {
+            AppState.teamHistory = [];
+        }
+
+        return { blackTeam: chosen.blackTeam, whiteTeam: chosen.whiteTeam };
     }
-
-    return { blackTeam: chosen.blackTeam, whiteTeam: chosen.whiteTeam };
 }
 
 function createTeamSignature(blackTeam, whiteTeam) {
