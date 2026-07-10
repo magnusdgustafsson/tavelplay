@@ -29,6 +29,7 @@ const AppState = {
         assist: null
     },
     viewingTeamsFromGame: false,
+    teamAddPlayerMode: false, // Show per-team add controls on View Teams during game
     todaysStatsView: 'field', // 'field' | 'gk'
     editingGameIndex: null // index into gameHistory when editing from View Games
 };
@@ -369,6 +370,12 @@ function updateTeamSelectionFooter() {
     const finishSessionTeamSelectionBtn = document.getElementById('finish-session-team-selection-btn');
     if (finishSessionTeamSelectionBtn) finishSessionTeamSelectionBtn.style.display = viewingFromGame ? 'none' : '';
     if (startGameBtn) startGameBtn.style.display = viewingFromGame ? 'none' : '';
+
+    const addPlayerDuringGameBtn = document.getElementById('add-player-during-game-toggle-btn');
+    if (addPlayerDuringGameBtn) {
+        addPlayerDuringGameBtn.style.display = viewingFromGame ? '' : 'none';
+        addPlayerDuringGameBtn.textContent = AppState.teamAddPlayerMode ? 'Done' : 'Add Player';
+    }
     
     if (viewingFromGame && backToGameBtn) {
         AppState.teamEditMode = false;
@@ -380,12 +387,15 @@ function updateTeamSelectionFooter() {
             if (seconds <= 0) {
                 clearTeamSelectionCountdown();
                 AppState.viewingTeamsFromGame = false;
+                AppState.teamAddPlayerMode = false;
                 showScreen('game-progress');
                 return;
             }
             backToGameBtn.textContent = `Back to Game (${seconds})`;
         }, 1000);
     } else {
+        AppState.teamAddPlayerMode = false;
+        if (addPlayerDuringGameBtn) addPlayerDuringGameBtn.style.display = 'none';
         startStartGameCountdown();
     }
 }
@@ -702,8 +712,14 @@ function startGame() {
         goals: [],
         playerGoals: {}, // Track goals per player in this game for hattricks
         playerPoints: {}, // Track points per player in this game for MVP calculation
-        plusMinusEnabled: plusMinusEnabled
+        plusMinusEnabled: plusMinusEnabled,
+        lateJoinerIds: [], // Players added mid-game after first goal — no win credit
+        playerJoinedAtGoalCount: {} // playerId -> goal index when they joined the team
     };
+
+    [...AppState.currentTeams.blackTeam, ...AppState.currentTeams.whiteTeam].forEach(player => {
+        AppState.currentGame.playerJoinedAtGoalCount[player.id] = 0;
+    });
     
     AppState.sessionActive = true;
     saveSession();
@@ -785,12 +801,14 @@ function registerGoal(team, scorer, assist) {
     
     // Update plus/minus if enabled for this game
     if (AppState.currentGame.plusMinusEnabled) {
+        const goalIndex = AppState.currentGame.goals.length - 1;
         const blackTeam = AppState.currentGame.blackTeam || [];
         const whiteTeam = AppState.currentGame.whiteTeam || [];
         const scoringTeam = team === 'black' ? blackTeam : whiteTeam;
         const concedingTeam = team === 'black' ? whiteTeam : blackTeam;
         
         scoringTeam.forEach(playerObj => {
+            if (!wasPlayerOnTeamForGoal(playerObj.id, goalIndex)) return;
             const p = AppState.players.find(pl => pl.id === playerObj.id);
             if (p && typeof p.plusMinus === 'number') {
                 p.plusMinus += 1;
@@ -798,6 +816,7 @@ function registerGoal(team, scorer, assist) {
         });
         
         concedingTeam.forEach(playerObj => {
+            if (!wasPlayerOnTeamForGoal(playerObj.id, goalIndex)) return;
             const p = AppState.players.find(pl => pl.id === playerObj.id);
             if (p && typeof p.plusMinus === 'number') {
                 p.plusMinus -= 1;
@@ -866,12 +885,14 @@ function undoLastGoal() {
     
     // Revert plus/minus if enabled for this game
     if (AppState.currentGame.plusMinusEnabled) {
+        const goalIndex = AppState.currentGame.goals.length;
         const blackTeam = AppState.currentGame.blackTeam || [];
         const whiteTeam = AppState.currentGame.whiteTeam || [];
         const scoringTeam = team === 'black' ? blackTeam : whiteTeam;
         const concedingTeam = team === 'black' ? whiteTeam : blackTeam;
         
         scoringTeam.forEach(playerObj => {
+            if (!wasPlayerOnTeamForGoal(playerObj.id, goalIndex)) return;
             const p = AppState.players.find(pl => pl.id === playerObj.id);
             if (p && typeof p.plusMinus === 'number') {
                 p.plusMinus -= 1;
@@ -879,6 +900,7 @@ function undoLastGoal() {
         });
         
         concedingTeam.forEach(playerObj => {
+            if (!wasPlayerOnTeamForGoal(playerObj.id, goalIndex)) return;
             const p = AppState.players.find(pl => pl.id === playerObj.id);
             if (p && typeof p.plusMinus === 'number') {
                 p.plusMinus += 1;
@@ -977,19 +999,21 @@ function endGame() {
     const whiteScore = AppState.currentGame.whiteScore;
     
     let winningTeam = null;
+    const lateJoinerIds = new Set(AppState.currentGame.lateJoinerIds || []);
+
     if (blackScore > whiteScore) {
         // Black team wins
         winningTeam = 'black';
         AppState.currentGame.blackTeam.forEach(player => {
             const p = AppState.players.find(pl => pl.id === player.id);
-            if (p) p.gamesWon++;
+            if (p && !lateJoinerIds.has(player.id)) p.gamesWon++;
         });
     } else if (whiteScore > blackScore) {
         // White team wins
         winningTeam = 'white';
         AppState.currentGame.whiteTeam.forEach(player => {
             const p = AppState.players.find(pl => pl.id === player.id);
-            if (p) p.gamesWon++;
+            if (p && !lateJoinerIds.has(player.id)) p.gamesWon++;
         });
     }
     // If tie, no one gets a win
@@ -1121,7 +1145,7 @@ function resetAllStatsFromHistory() {
         const goals = Array.isArray(game.goals) ? game.goals : [];
         const plusMinusEnabled = !!game.plusMinusEnabled;
 
-        goals.forEach(goal => {
+        goals.forEach((goal, goalIndex) => {
             if (!goal || !goal.scorer || (goal.team !== 'black' && goal.team !== 'white')) {
                 return;
             }
@@ -1131,6 +1155,8 @@ function resetAllStatsFromHistory() {
             } else {
                 whiteScore++;
             }
+
+            const joinedAt = (playerId) => game.playerJoinedAtGoalCount?.[playerId] ?? 0;
 
             const scorerId = goal.scorer;
             if (!game.playerGoals[scorerId]) {
@@ -1169,6 +1195,7 @@ function resetAllStatsFromHistory() {
                 const concedingTeam = goal.team === 'black' ? whiteTeam : blackTeam;
                 
                 scoringTeam.forEach(playerObj => {
+                    if (joinedAt(playerObj.id) > goalIndex) return;
                     const p = players.find(pl => pl.id === playerObj.id);
                     if (p) {
                         p.plusMinus = (p.plusMinus || 0) + 1;
@@ -1176,6 +1203,7 @@ function resetAllStatsFromHistory() {
                 });
                 
                 concedingTeam.forEach(playerObj => {
+                    if (joinedAt(playerObj.id) > goalIndex) return;
                     const p = players.find(pl => pl.id === playerObj.id);
                     if (p) {
                         p.plusMinus = (p.plusMinus || 0) - 1;
@@ -1222,17 +1250,19 @@ function resetAllStatsFromHistory() {
             winningTeam = 'white';
         }
 
+        const lateJoinerIds = new Set(game.lateJoinerIds || []);
+
         if (winningTeam === 'black') {
             blackTeam.forEach(playerObj => {
                 const p = players.find(pl => pl.id === playerObj.id);
-                if (p) {
+                if (p && !lateJoinerIds.has(playerObj.id)) {
                     p.gamesWon = (p.gamesWon || 0) + 1;
                 }
             });
         } else if (winningTeam === 'white') {
             whiteTeam.forEach(playerObj => {
                 const p = players.find(pl => pl.id === playerObj.id);
-                if (p) {
+                if (p && !lateJoinerIds.has(playerObj.id)) {
                     p.gamesWon = (p.gamesWon || 0) + 1;
                 }
             });
@@ -1754,6 +1784,76 @@ function renderSettings() {
 const STARTING_PLAYER_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="72" height="22" viewBox="0 0 72 22" class="starting-player-icon-svg" aria-hidden="true"><rect x="0" y="0" width="72" height="22" rx="4" fill="#2d5a27" stroke="#1a3518" stroke-width="1.5"/><text x="36" y="15" text-anchor="middle" font-family="monospace" font-size="10" font-weight="bold" fill="#a8e6a0" letter-spacing="0.5">STARTING</text></svg>`;
 // Substitute player icon (same size/layout, light blue, SUBST)
 const SUBST_PLAYER_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="72" height="22" viewBox="0 0 72 22" class="starting-player-icon-svg" aria-hidden="true"><rect x="0" y="0" width="72" height="22" rx="4" fill="#5a9fd4" stroke="#2a6a94" stroke-width="1.5"/><text x="36" y="15" text-anchor="middle" font-family="monospace" font-size="10" font-weight="bold" fill="#e8f4fc" letter-spacing="0.5">SUBST</text></svg>`;
+const LATE_PLAYER_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="72" height="22" viewBox="0 0 72 22" class="starting-player-icon-svg" aria-hidden="true"><rect x="0" y="0" width="72" height="22" rx="4" fill="#8a4a1a" stroke="#5a3010" stroke-width="1.5"/><text x="36" y="15" text-anchor="middle" font-family="monospace" font-size="10" font-weight="bold" fill="#ffe8c8" letter-spacing="0.5">LATE</text></svg>`;
+
+function renderTeamPlayerBadge(container, player, starters) {
+    if (isPlayerLateJoiner(player.id)) {
+        const iconSpan = document.createElement('span');
+        iconSpan.className = 'starting-player-icon';
+        iconSpan.title = 'Joined after first goal — no win credit';
+        iconSpan.innerHTML = LATE_PLAYER_ICON_SVG;
+        container.appendChild(iconSpan);
+    } else if (AppState.settings.startingLineupEnabled && AppState.currentStartingLineup) {
+        const iconSpan = document.createElement('span');
+        iconSpan.className = 'starting-player-icon';
+        if (starters.includes(player.id)) {
+            iconSpan.title = 'Starting player';
+            iconSpan.innerHTML = STARTING_PLAYER_ICON_SVG;
+        } else {
+            iconSpan.title = 'Substitute';
+            iconSpan.innerHTML = SUBST_PLAYER_ICON_SVG;
+        }
+        container.appendChild(iconSpan);
+    }
+}
+
+function renderTeamAddPlayerControls(teamSide, teamDiv) {
+    if (!AppState.viewingTeamsFromGame || !AppState.currentGame || !AppState.teamAddPlayerMode) return;
+
+    const form = document.createElement('div');
+    form.className = 'team-add-player-form';
+
+    const select = document.createElement('select');
+    select.id = `add-player-select-${teamSide}`;
+    select.className = 'add-player-during-game-select player-name-input-style';
+    select.setAttribute('data-team-side', teamSide);
+
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = 'Add player…';
+    select.appendChild(defaultOpt);
+
+    getPlayersNotOnCurrentTeams().forEach(player => {
+        const opt = document.createElement('option');
+        opt.value = player.id;
+        opt.textContent = player.name;
+        select.appendChild(opt);
+    });
+
+    const newOpt = document.createElement('option');
+    newOpt.value = '__new__';
+    newOpt.textContent = 'Enter new name…';
+    select.appendChild(newOpt);
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.id = `add-player-input-${teamSide}`;
+    input.className = 'team-add-player-input';
+    input.placeholder = 'New player name';
+    input.maxLength = 30;
+    input.style.display = 'none';
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'btn-primary add-player-during-game-btn';
+    addBtn.textContent = 'Add';
+    addBtn.setAttribute('data-team-side', teamSide);
+
+    form.appendChild(select);
+    form.appendChild(input);
+    form.appendChild(addBtn);
+    teamDiv.appendChild(form);
+}
 
 function renderTeamDisplay(teams) {
     if (!teams) return;
@@ -1778,18 +1878,7 @@ function renderTeamDisplay(teams) {
             const container = document.createElement('div');
             container.className = 'team-player-item';
             
-            if (AppState.settings.startingLineupEnabled && AppState.currentStartingLineup) {
-                const iconSpan = document.createElement('span');
-                iconSpan.className = 'starting-player-icon';
-                if (blackStarters.includes(player.id)) {
-                    iconSpan.title = 'Starting player';
-                    iconSpan.innerHTML = STARTING_PLAYER_ICON_SVG;
-                } else {
-                    iconSpan.title = 'Substitute';
-                    iconSpan.innerHTML = SUBST_PLAYER_ICON_SVG;
-                }
-                container.appendChild(iconSpan);
-            }
+            renderTeamPlayerBadge(container, player, blackStarters);
             
             const nameDiv = document.createElement('div');
             nameDiv.className = 'team-player-name';
@@ -1816,6 +1905,8 @@ function renderTeamDisplay(teams) {
             
             blackTeamDiv.appendChild(container);
         });
+
+        renderTeamAddPlayerControls('black', blackTeamDiv);
 
         // Goalkeeper selector for black team
         if (AppState.settings.goalkeepersEnabled && AppState.goalkeepers.length > 0) {
@@ -1857,18 +1948,7 @@ function renderTeamDisplay(teams) {
             const container = document.createElement('div');
             container.className = 'team-player-item';
             
-            if (AppState.settings.startingLineupEnabled && AppState.currentStartingLineup) {
-                const iconSpan = document.createElement('span');
-                iconSpan.className = 'starting-player-icon';
-                if (whiteStarters.includes(player.id)) {
-                    iconSpan.title = 'Starting player';
-                    iconSpan.innerHTML = STARTING_PLAYER_ICON_SVG;
-                } else {
-                    iconSpan.title = 'Substitute';
-                    iconSpan.innerHTML = SUBST_PLAYER_ICON_SVG;
-                }
-                container.appendChild(iconSpan);
-            }
+            renderTeamPlayerBadge(container, player, whiteStarters);
             
             const nameDiv = document.createElement('div');
             nameDiv.className = 'team-player-name';
@@ -1895,6 +1975,8 @@ function renderTeamDisplay(teams) {
             
             whiteTeamDiv.appendChild(container);
         });
+
+        renderTeamAddPlayerControls('white', whiteTeamDiv);
 
         // Goalkeeper selector for white team
         if (AppState.settings.goalkeepersEnabled && AppState.goalkeepers.length > 0) {
@@ -2051,6 +2133,124 @@ function movePlayerBetweenTeams(playerId, fromTeam, toTeam) {
     
     // Update display
     renderTeamDisplay(AppState.currentTeams);
+}
+
+function getPlayersNotOnCurrentTeams() {
+    if (!AppState.currentTeams) return [];
+    const onTeamIds = new Set([
+        ...AppState.currentTeams.blackTeam.map(p => p.id),
+        ...AppState.currentTeams.whiteTeam.map(p => p.id)
+    ]);
+    return AppState.players.filter(p => !onTeamIds.has(p.id));
+}
+
+function isPlayerLateJoiner(playerId) {
+    return !!(AppState.currentGame?.lateJoinerIds?.includes(playerId));
+}
+
+function wasPlayerOnTeamForGoal(playerId, goalIndex) {
+    const joinedAt = AppState.currentGame?.playerJoinedAtGoalCount?.[playerId] ?? 0;
+    return joinedAt <= goalIndex;
+}
+
+function addPlayerToTeamDuringGame(teamSide, playerId) {
+    if (!AppState.viewingTeamsFromGame || !AppState.currentGame || !AppState.currentTeams) {
+        return false;
+    }
+    if (teamSide !== 'black' && teamSide !== 'white') return false;
+
+    const player = AppState.players.find(p => p.id === playerId);
+    if (!player) return false;
+
+    const teamKey = teamSide === 'black' ? 'blackTeam' : 'whiteTeam';
+    const onTeam = [...AppState.currentTeams.blackTeam, ...AppState.currentTeams.whiteTeam]
+        .some(p => p.id === playerId);
+    if (onTeam) return false;
+
+    if (player.active === false) {
+        player.active = true;
+    }
+
+    AppState.currentTeams[teamKey].push({ id: player.id, name: player.name });
+
+    if (!AppState.currentGame.lateJoinerIds) {
+        AppState.currentGame.lateJoinerIds = [];
+    }
+    if (!AppState.currentGame.playerJoinedAtGoalCount) {
+        AppState.currentGame.playerJoinedAtGoalCount = {};
+    }
+    AppState.currentGame.playerJoinedAtGoalCount[player.id] = AppState.currentGame.goals.length;
+    if (AppState.currentGame.goals.length > 0) {
+        AppState.currentGame.lateJoinerIds.push(player.id);
+    }
+
+    saveSession();
+    updateStandings();
+    renderTeamDisplay(AppState.currentTeams);
+    return true;
+}
+
+function addNewPlayerToTeamDuringGame(teamSide, name) {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return false;
+
+    const existing = AppState.players.find(
+        p => (p.name || '').toLowerCase() === trimmed.toLowerCase()
+    );
+    if (existing) {
+        return addPlayerToTeamDuringGame(teamSide, existing.id);
+    }
+
+    if (!addPlayer(trimmed)) return false;
+    const player = AppState.players.find(
+        p => (p.name || '').toLowerCase() === trimmed.toLowerCase()
+    );
+    if (!player) return false;
+
+    return addPlayerToTeamDuringGame(teamSide, player.id);
+}
+
+function handleAddPlayerDuringGame(teamSide) {
+    const select = document.getElementById(`add-player-select-${teamSide}`);
+    if (!select) return;
+
+    const value = select.value;
+    if (!value) return;
+
+    let success = false;
+    if (value === '__new__') {
+        const input = document.getElementById(`add-player-input-${teamSide}`);
+        const name = input ? input.value : '';
+        success = addNewPlayerToTeamDuringGame(teamSide, name);
+        if (success && input) input.value = '';
+    } else {
+        success = addPlayerToTeamDuringGame(teamSide, value);
+    }
+
+    if (success) {
+        select.value = '';
+        const input = document.getElementById(`add-player-input-${teamSide}`);
+        if (input) {
+            input.value = '';
+            input.style.display = 'none';
+        }
+    }
+}
+
+function toggleTeamAddPlayerMode() {
+    if (!AppState.viewingTeamsFromGame || !AppState.currentGame) return;
+    AppState.teamAddPlayerMode = !AppState.teamAddPlayerMode;
+    if (AppState.currentTeams) {
+        renderTeamDisplay(AppState.currentTeams);
+    }
+    updateTeamSelectionFooterAddPlayerButton();
+}
+
+function updateTeamSelectionFooterAddPlayerButton() {
+    const addPlayerDuringGameBtn = document.getElementById('add-player-during-game-toggle-btn');
+    if (addPlayerDuringGameBtn && AppState.viewingTeamsFromGame && AppState.currentGame) {
+        addPlayerDuringGameBtn.textContent = AppState.teamAddPlayerMode ? 'Done' : 'Add Player';
+    }
 }
 
 function playRematch() {
@@ -4051,7 +4251,15 @@ function setupEventListeners() {
             clearTeamSelectionCountdown();
             clearStartGameCountdown();
             AppState.viewingTeamsFromGame = false;
+            AppState.teamAddPlayerMode = false;
             showScreen('game-progress');
+        });
+    }
+
+    const addPlayerDuringGameToggleBtn = document.getElementById('add-player-during-game-toggle-btn');
+    if (addPlayerDuringGameToggleBtn) {
+        addPlayerDuringGameToggleBtn.addEventListener('click', () => {
+            toggleTeamAddPlayerMode();
         });
     }
     
@@ -4081,6 +4289,26 @@ function setupEventListeners() {
                 renderTeamDisplay(AppState.currentTeams);
             }
         }
+        if (e.target.classList.contains('add-player-during-game-btn')) {
+            const teamSide = e.target.getAttribute('data-team-side');
+            if (teamSide) handleAddPlayerDuringGame(teamSide);
+        }
+    });
+
+    document.addEventListener('change', (e) => {
+        if (!e.target.classList.contains('add-player-during-game-select')) return;
+        const teamSide = e.target.getAttribute('data-team-side');
+        const input = document.getElementById(`add-player-input-${teamSide}`);
+        if (input) {
+            input.style.display = e.target.value === '__new__' ? '' : 'none';
+        }
+    });
+
+    document.addEventListener('keypress', (e) => {
+        if (e.key !== 'Enter' || !e.target.classList.contains('team-add-player-input')) return;
+        const id = e.target.id || '';
+        const teamSide = id.replace('add-player-input-', '');
+        if (teamSide) handleAddPlayerDuringGame(teamSide);
     });
     
     if (startGameBtn) {
@@ -4120,6 +4348,7 @@ function setupEventListeners() {
     if (viewTeamsBtn) {
         viewTeamsBtn.addEventListener('click', () => {
             AppState.viewingTeamsFromGame = true;
+            AppState.teamAddPlayerMode = false;
             showScreen('team-selection');
         });
     }

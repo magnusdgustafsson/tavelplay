@@ -709,6 +709,37 @@ body {
     background-color: #a02020;
 }
 
+.team-add-player-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 2px dashed rgba(64, 64, 64, 0.6);
+}
+
+.team-add-player-form .player-name-input-style {
+    max-width: none;
+    font-size: 12px;
+    padding: 10px;
+}
+
+.team-add-player-input {
+    padding: 10px 12px;
+    font-size: 12px;
+    border: 2px solid #404040;
+    border-radius: 8px;
+    background-color: #f0f0f0;
+    color: #000;
+    font-family: 'Press Start 2P', 'Courier New', Courier, monospace;
+}
+
+.team-add-player-form .add-player-during-game-btn {
+    padding: 10px 16px;
+    font-size: 12px;
+    min-height: 44px;
+}
+
 /* Game In Progress Screen */
 .score-display {
     display: flex;
