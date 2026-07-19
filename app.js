@@ -713,7 +713,7 @@ function startGame() {
         playerGoals: {}, // Track goals per player in this game for hattricks
         playerPoints: {}, // Track points per player in this game for MVP calculation
         plusMinusEnabled: plusMinusEnabled,
-        lateJoinerIds: [], // Players added mid-game after first goal — no win credit
+        lateJoinerIds: [], // Players added after their own team scored its first goal — no win credit
         playerJoinedAtGoalCount: {} // playerId -> goal index when they joined the team
     };
 
@@ -1790,7 +1790,7 @@ function renderTeamPlayerBadge(container, player, starters) {
     if (isPlayerLateJoiner(player.id)) {
         const iconSpan = document.createElement('span');
         iconSpan.className = 'starting-player-icon';
-        iconSpan.title = 'Joined after first goal — no win credit';
+        iconSpan.title = 'Joined after own team scored — no win credit';
         iconSpan.innerHTML = LATE_PLAYER_ICON_SVG;
         container.appendChild(iconSpan);
     } else if (AppState.settings.startingLineupEnabled && AppState.currentStartingLineup) {
@@ -2180,7 +2180,11 @@ function addPlayerToTeamDuringGame(teamSide, playerId) {
         AppState.currentGame.playerJoinedAtGoalCount = {};
     }
     AppState.currentGame.playerJoinedAtGoalCount[player.id] = AppState.currentGame.goals.length;
-    if (AppState.currentGame.goals.length > 0) {
+    // No win credit only if this player's own team has already scored
+    const ownTeamScore = teamSide === 'black'
+        ? AppState.currentGame.blackScore
+        : AppState.currentGame.whiteScore;
+    if (ownTeamScore > 0) {
         AppState.currentGame.lateJoinerIds.push(player.id);
     }
 
